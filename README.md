@@ -1,4 +1,4 @@
-# Metgalactic Llamas: Battle at the Edge of Time by Jeff Minter
+# Metagalactic Llamas: Battle at the Edge of Time by Jeff Minter
 <img src="https://www.mobygames.com/images/covers/l/539848-metagalactic-llamas-battle-at-the-edge-of-time-vic-20-front-cover.jpg" height=300><img src="https://user-images.githubusercontent.com/58846/104136780-2b319d80-5390-11eb-8617-89bf4a598ded.gif" height=300>
 
 This is the disassembled and [commented source code] for the 1984 Commodore Vic 20 game Metgalactic Llamas: Battle at the Edge of Time by Jeff Minter. 
