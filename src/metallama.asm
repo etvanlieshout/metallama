@@ -4,8 +4,8 @@
 ;
 zpLo = $00
 zpHi = $01
-a02 = $02
-a03 = $03
+screenPtrXPos = $02
+screenPtrYPos = $03
 charToDraw = $04
 colorToDraw = $05
 a07 = $07
@@ -14,14 +14,14 @@ a0A = $0A
 a0B = $0B
 a0C = $0C
 a0E = $0E
-a10 = $10
+currentPlayerPositionCol = $10
 a11 = $11
-a12 = $12
-a13 = $13
+lastMovementDirection = $12
+joystickInput = $13
 a14 = $14
-a15 = $15
+previousPlayerPositionCol = $15
 a16 = $16
-a17 = $17
+deflexLinePos = $17
 a18 = $18
 a19 = $19
 a1A = $1A
@@ -137,8 +137,8 @@ b101C   LDA zpLo
 ; Screen_GetPtr
 ;------------------------------------------------
 Screen_GetPtr
-        LDX a03
-        LDY a02
+        LDX screenPtrYPos
+        LDY screenPtrXPos
         LDA SCREEN_PTR_LO,X
         STA zpLo
         LDA SCREEN_PTR_HI,X
@@ -147,7 +147,7 @@ Screen_GetPtr
 
 ;------------------------------------------------
 ;------------------------------------------------
-s1048   TXA 
+GetCharacterAtCurrentPos   TXA 
         PHA 
         TYA 
         PHA 
@@ -160,7 +160,7 @@ b1053   JMP j1079
 ; DrawCharacter
 ;------------------------------------------------
 DrawCharacter
-        LDA a02
+        LDA screenPtrXPos
         AND #$80
         BEQ b105D
         RTS 
@@ -169,7 +169,7 @@ b105D   TXA
         PHA 
         TYA 
         PHA 
-        LDA a02
+        LDA screenPtrXPos
         CMP #$28
         BPL b1053
         JSR Screen_GetPtr
@@ -228,42 +228,42 @@ DrawTitleScreen
         STA colorToDraw
 
         LDA #$14
-        STA a03
+        STA screenPtrYPos
 
         LDA #$00
-        STA a02
+        STA screenPtrXPos
 
         ; Draw the band across the top of the scores
         LDA #$26 ; See $26 in charset.asm
         STA charToDraw
 b10C4   JSR DrawCharacter
-        INC a02
-        LDA a02
+        INC screenPtrXPos
+        LDA screenPtrXPos
         CMP #$16
         BNE b10C4
 
-        INC a03
+        INC screenPtrYPos
         LDA #$07
         STA colorToDraw
         LDX #$00
-        STX a02
+        STX screenPtrXPos
 
 b10D9   LDA ScoreLineText,X
         STA charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INX 
         CPX #$16
         BNE b10D9
 
-        INC a03
+        INC screenPtrYPos
         LDA #$08
-        STA a02
+        STA screenPtrXPos
         LDX #$00
 b10F0   LDA QuotaText,X
         STA charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INX 
         CPX #$05
         BNE b10F0
@@ -302,7 +302,7 @@ StartNewLevel
         STA a25
 RestartLevel
         LDA #$0A
-        STA a10
+        STA currentPlayerPositionCol
         JSR DrawLevelInterstitial
         LDY #$20
         LDX currentLevel
@@ -320,10 +320,10 @@ b114D   INY
         LDA #$01
         STA a11
         STA a1F
-        STA a12
+        STA lastMovementDirection
         STA a16
         LDA #<p03
-        STA a17
+        STA deflexLinePos
         LDA #>p03
         STA a18
         LDA #$07
@@ -338,8 +338,9 @@ b1172   STA f037F,X
         DEX 
         BNE b1172
 
+        ; Reset the list of active spiders
         LDX #$16
-b117A   STA f1B7F,X
+b117A   STA activeSpiderArray,X
         DEX 
         BNE b117A
 
@@ -355,23 +356,27 @@ b117A   STA f1B7F,X
         JMP MainGameLoop
 
 ;------------------------------------------------
-; PlaySomeSounds
+; GetJoystickInput
 ;------------------------------------------------
-PlaySomeSounds
+GetJoystickInput
         SEI 
         LDX #$7F
         STX VIA2DDRB ;$9122 - data direction register for port b
+
 b1198   LDY VIA2PB   ;$9120 - port b I/O register
         CPY VIA2PB   ;$9120 - port b I/O register
         BNE b1198
+
         LDX #$FF
         STX VIA2DDRB ;$9122 - data direction register for port b
         LDX #$F7
         STX VIA2PB   ;$9120 - port b I/O register
         CLI 
+
 b11AB   LDA VIA1PA2  ;$911F - mirror of VIA1PA1 (CA1 & CA2 unaffected)
         CMP VIA1PA2  ;$911F - mirror of VIA1PA1 (CA1 & CA2 unaffected)
         BNE b11AB
+
         PHA 
         AND #$1C
         LSR 
@@ -385,21 +390,25 @@ b11BD   TAY
         TYA 
         ROR 
         EOR #$8F
-        STA a13
+        STA joystickInput
         RTS 
 
 ;------------------------------------------------
 ; MainGameLoop
 ;------------------------------------------------
 MainGameLoop
-        JSR s11DC
-        JSR s1325
-        JSR s14E8
-        JSR s1755
-        JSR s1312
+        JSR DrawPlayerMovement
+        JSR UpdateDeflexLine
+        JSR UpdateSpiders
+        JSR PlayBackgroundMusic
+        JSR WaitALittleWhile
         JMP MainGameLoop
 
-s11DC   DEC a14
+;------------------------------------------------
+; DrawPlayerMovement
+;------------------------------------------------
+DrawPlayerMovement
+        DEC a14
         BEQ b11E1
         RTS 
 
@@ -409,151 +418,170 @@ b11E1   LDA #$50
         BEQ b11EB
         DEC a18
 b11EB   LDA a11
-        BNE b1254
-        LDA a10
-        STA a15
-        JSR PlaySomeSounds
-        LDA a13
+        BNE DrawOverOldPosition
+        LDA currentPlayerPositionCol
+        STA previousPlayerPositionCol
+
+        JSR GetJoystickInput
+
+        ; Check for movement left
+        LDA joystickInput
         AND #$04
-        BEQ b120C
+        BEQ CheckRight
+
+        ;Move left
         LDA #$00
-        STA a12
-        DEC a10
-        LDA a10
-        CMP #$01
-        BNE b120C
+        STA lastMovementDirection
+        DEC currentPlayerPositionCol
+        LDA currentPlayerPositionCol
+        CMP #$01 ; Should we wrap around?
+        BNE CheckRight
+        ;Wrap position to the right hand side of the screen.
         LDA #$13
-        STA a10
-b120C   LDA a13
+        STA currentPlayerPositionCol
+
+        ;Check for movement right.
+CheckRight
+        LDA joystickInput
         AND #$08
         BEQ b1222
+        ;Moved Right
         LDA #$01
-        STA a12
-        INC a10
-        LDA a10
+        STA lastMovementDirection
+        INC currentPlayerPositionCol
+        LDA currentPlayerPositionCol
         CMP #$14
         BNE b1222
         LDA #$02
-        STA a10
+        STA currentPlayerPositionCol
+
 b1222   LDA #$12
-        STA a03
-        LDA a10
-        CMP a15
-        BEQ b1254
+        STA screenPtrYPos
+        LDA currentPlayerPositionCol
+        CMP previousPlayerPositionCol
+        BEQ DrawOverOldPosition
+
+        ; Update the player's position
         LDA #$12
-        STA a03
+        STA screenPtrYPos
         LDA #$01
         STA a11
-        LDA a15
-        STA a02
+        LDA previousPlayerPositionCol
+        STA screenPtrXPos
         JSR s12A5
         LDA #$05
         STA charToDraw
-        LDA a12
+        LDA lastMovementDirection
         BNE b1247
         LDA #$0F
         STA charToDraw
-b1247   LDA a10
-        STA a02
-        LDA a12
+b1247   LDA currentPlayerPositionCol
+        STA screenPtrXPos
+        LDA lastMovementDirection
         BEQ b1251
-        DEC a02
+        DEC screenPtrXPos
 b1251   JMP j12BE
 
-b1254   LDA #$12
-        STA a03
-        LDA a10
-        STA a02
+DrawOverOldPosition
+        LDA #$12
+        STA screenPtrYPos
+        LDA currentPlayerPositionCol
+        STA screenPtrXPos
         LDA #$00
         STA a11
-        LDA a12
+        LDA lastMovementDirection
         BEQ b1266
-        DEC a02
-b1266   JSR s127C
+        DEC screenPtrXPos
+b1266   JSR ClearOldPosition
         LDA #$01
         STA charToDraw
-        LDA a12
+        LDA lastMovementDirection
         BNE b1275
         LDA #$0B
         STA charToDraw
-b1275   LDA a10
-        STA a02
+b1275   LDA currentPlayerPositionCol
+        STA screenPtrXPos
         JMP j12F1
 
-s127C   LDA #$00
+ClearOldPosition
+        LDA #$00
         STA charToDraw
         JSR DrawCharacter
-        LDA a02
+        LDA screenPtrXPos
         PHA 
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
         PLA 
-        STA a02
-        INC a03
+        STA screenPtrXPos
+        INC screenPtrYPos
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
-        DEC a03
+        DEC screenPtrYPos
         RTS 
 
 s12A5   LDA #$00
         STA charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
-        INC a03
+        INC screenPtrYPos
         JSR DrawCharacter
-        DEC a02
+        DEC screenPtrXPos
         JSR DrawCharacter
-        DEC a03
+        DEC screenPtrYPos
         RTS 
 
 j12BE   LDA #$07
         STA colorToDraw
         JSR DrawCharacter
-        LDA a02
+        LDA screenPtrXPos
         PHA 
         INC charToDraw
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
         INC charToDraw
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
         PLA 
-        STA a02
-        INC a03
+        STA screenPtrXPos
+        INC screenPtrYPos
         INC charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INC charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INC charToDraw
         JSR DrawCharacter
-        DEC a03
+        DEC screenPtrYPos
         RTS 
 
 j12F1   LDA #$07
         STA colorToDraw
         JSR DrawCharacter
         INC charToDraw
-        INC a02
+        INC screenPtrXPos
         JSR DrawCharacter
-        DEC a02
-        INC a03
+        DEC screenPtrXPos
+        INC screenPtrYPos
         INC charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INC charToDraw
         JSR DrawCharacter
-        DEC a03
+        DEC screenPtrYPos
         RTS 
 
-s1312   LDX #$01
+;------------------------------------------------
+; WaitALittleWhile
+;------------------------------------------------
+WaitALittleWhile
+        LDX #$01
 b1314   LDY #$40
 b1316   DEY 
         BNE b1316
@@ -563,7 +591,11 @@ b1316   DEY
 
 f131D   .BYTE $00
 f131E   .BYTE $06,$02,$04,$05,$03,$07,$01
-s1325   DEC a1A
+;------------------------------------------------
+; UpdateDeflexLine
+;------------------------------------------------
+UpdateDeflexLine
+        DEC a1A
         BEQ b132A
 b1329   RTS 
 
@@ -574,52 +606,58 @@ b132A   LDA #$10
         BNE b1329
         LDA #$02
         STA a16
-        JSR PlaySomeSounds
-        LDA a17
-        STA a03
+        JSR GetJoystickInput
+
+
+        ; Clear the old line 
+        LDA deflexLinePos
+        STA screenPtrYPos
         LDA #$00
-        STA a02
+        STA screenPtrXPos
         STA charToDraw
-b1346   JSR s1048
-        CMP #$1B
+b1346   JSR GetCharacterAtCurrentPos
+        CMP #$1B ; Don't overwrite the spider's web
         BNE b1350
         JSR DrawCharacter
-b1350   INC a02
-        LDA a02
+b1350   INC screenPtrXPos
+        LDA screenPtrXPos
         CMP #$16
         BNE b1346
-        LDA a13
+
+        LDA joystickInput
         AND #$01
         BEQ b1368
-        DEC a17
-        LDA a17
+        DEC deflexLinePos
+        LDA deflexLinePos
         CMP #$FF
         BNE b1368
-        INC a17
-b1368   LDA a13
+        INC deflexLinePos
+b1368   LDA joystickInput
         AND #$02
         BEQ b1378
-        INC a17
-        LDA a17
+        INC deflexLinePos
+        LDA deflexLinePos
         CMP #$0A
         BNE b1378
-        DEC a17
+        DEC deflexLinePos
 b1378   LDA #$00
-        STA a02
+        STA screenPtrXPos
         LDA #$1B
         STA charToDraw
         LDX a18
         LDA f131E,X
         STA colorToDraw
-        LDA a17
-        STA a03
-b138B   JSR s1048
+
+        LDA deflexLinePos
+        STA screenPtrYPos
+b138B   JSR GetCharacterAtCurrentPos
         BNE b1393
         JSR DrawCharacter
-b1393   INC a02
-        LDA a02
+b1393   INC screenPtrXPos
+        LDA screenPtrXPos
         CMP #$16
         BNE b138B
+
         LDX VICCR4   ;$9004 - raster beam location (bits 7-0)
         LDA fC000,X
         STA a1CDB
@@ -628,12 +666,15 @@ b1393   INC a02
 f13AA   RTS 
 
         .BYTE $07,$03,$06
+;------------------------------------------------
+; s13AE
+;------------------------------------------------
 s13AE   LDA a0380
         CMP #$FF
         BEQ b13B8
         JMP j13F9
 
-b13B8   LDA a13
+b13B8   LDA joystickInput
         AND #$80
         BNE b13BF
         RTS 
@@ -650,8 +691,8 @@ b13BF   LDX #$03
         JSR s1829
 b13D5   LDA #$11
         STA f0383,X
-        LDY a10
-        LDA a12
+        LDY currentPlayerPositionCol
+        LDA lastMovementDirection
         BNE b13E3
         DEY 
         DEY 
@@ -660,7 +701,7 @@ b13E3   INY
         INY 
         TYA 
         STA f037F,X
-        LDA a12
+        LDA lastMovementDirection
         STA f0387,X
         LDA #$00
         STA f038B,X
@@ -669,10 +710,10 @@ b13E3   INY
         JMP j1448
 
 j13F9   LDA a0382
-        STA a02
+        STA screenPtrXPos
 p1400   =*+$02
         LDA a0386
-        STA a03
+        STA screenPtrYPos
         LDA #$00
         STA charToDraw
         JSR DrawCharacter
@@ -713,15 +754,15 @@ b1459   LDA a19
         EOR #$01
         STA f0388
 j1466   LDA f0384
-        CMP a17
+        CMP deflexLinePos
         BMI b148C
         JMP j14A3
 
 j1470   LDX #$03
 b1472   LDA f037F,X
-        STA a02
+        STA screenPtrXPos
         LDA f0383,X
-        STA a03
+        STA screenPtrYPos
         LDA #$00
         STA charToDraw
         JSR DrawCharacter
@@ -731,7 +772,7 @@ b1472   LDA f037F,X
         BNE b1472
         RTS 
 
-b148C   LDA a17
+b148C   LDA deflexLinePos
         STA f0384
         LDA #$01
         STA f038C
@@ -745,9 +786,9 @@ j14A3   LDX #$03
 b14A5   LDA f13AA,X
         STA colorToDraw
         LDA f037F,X
-        STA a02
+        STA screenPtrXPos
         LDA f0383,X
-        STA a03
+        STA screenPtrYPos
         LDY #$16
         LDA f0387,X
         BNE b14BC
@@ -761,7 +802,7 @@ b14BC   LDA f038B,X
 
 b14C9   INY 
 b14CA   STY charToDraw
-        JSR s1048
+        JSR GetCharacterAtCurrentPos
         JSR s1670
         BNE b14D7
         JMP j1470
@@ -776,7 +817,11 @@ b14D7   JSR DrawCharacter
 
 b14E7   RTS 
 
-s14E8   DEC a1B
+;------------------------------------------------
+; UpdateSpiders
+;------------------------------------------------
+UpdateSpiders
+        DEC a1B
         BEQ b14ED
         RTS 
 
@@ -801,11 +846,12 @@ b14ED   LDA a27
 b1513   LDA a26
         STA a1C
         LDX #$16
-b1519   LDA f1B7F,X
+b1519   LDA activeSpiderArray,X
         CMP #$FF
         BEQ b1526
         DEX 
         BNE b1519
+
         JMP j1543
 
 b1526   INC a1D
@@ -814,21 +860,23 @@ b1526   INC a1D
         AND #$1F
         CMP #$16
         BPL b1526
-        STA f1B7F,X
+        STA activeSpiderArray,X
         LDA #$01
-        STA f1B9F,X
+        STA activeWebLengthArray,X
         STA f1BDF,X
         LDA #$00
         STA f1BBF,X
+
 j1543   LDX #$16
-b1545   LDA f1B7F,X
+
+b1545   LDA activeSpiderArray,X
         CMP #$FF
         BNE b154F
         JMP j157B
 
 b154F   LDA f1BBF,X
         BNE b155A
-        JSR s157F
+        JSR UpdateWeb
         JMP j157B
 
 b155A   CMP #$01
@@ -851,19 +899,21 @@ j157B   DEX
         BNE b1545
         RTS 
 
-s157F   LDA #$00
-        STA a03
-        LDA f1B7F,X
-        STA a02
-        LDA #>p0417
+UpdateWeb
+        LDA #$00
+        STA screenPtrYPos
+        LDA activeSpiderArray,X
+        STA screenPtrXPos
+        LDA #$04
         STA colorToDraw
-        LDA #<p0417
+        LDA #$17
         STA charToDraw
 b1590   JSR DrawCharacter
-        INC a03
-        LDA a03
-        CMP f1B9F,X
+        INC screenPtrYPos
+        LDA screenPtrYPos
+        CMP activeWebLengthArray,X
         BNE b1590
+
         LDA #$1C
         CLC 
         ADC f1BDF,X
@@ -874,8 +924,8 @@ b1590   JSR DrawCharacter
         AND #$01
         STA f1BDF,X
         BNE b15BE
-        INC f1B9F,X
-        LDA f1B9F,X
+        INC activeWebLengthArray,X
+        LDA activeWebLengthArray,X
         CMP #$0F
         BEQ b15BF
 b15BE   RTS 
@@ -884,14 +934,14 @@ b15BF   LDA #$01
         STA f1BBF,X
         LDA #$00
         STA f1BDF,X
-        DEC f1B9F,X
+        DEC activeWebLengthArray,X
 f15CC   RTS 
 
         .BYTE $17,$18,$19,$1A,$00
 s15D2   LDA #$00
-        STA a03
-        LDA f1B7F,X
-        STA a02
+        STA screenPtrYPos
+        LDA activeSpiderArray,X
+        STA screenPtrXPos
         INC f1BDF,X
         LDA f1BDF,X
         CMP #$06
@@ -903,9 +953,9 @@ s15D2   LDA #$00
         AND #$07
         STA colorToDraw
 b15F1   JSR DrawCharacter
-        INC a03
-        LDA a03
-        CMP f1B9F,X
+        INC screenPtrYPos
+        LDA screenPtrYPos
+        CMP activeWebLengthArray,X
         BNE b15F1
         LDA #$1C
         STA charToDraw
@@ -917,21 +967,21 @@ b1608   LDA #$02
         STA f1BBF,X
         RTS 
 
-s160E   LDA f1B7F,X
-        STA a02
-        LDA f1B9F,X
-        STA a03
+s160E   LDA activeSpiderArray,X
+        STA screenPtrXPos
+        LDA activeWebLengthArray,X
+        STA screenPtrYPos
         LDA #$00
         STA charToDraw
         JSR s1884
-        INC f1B9F,X
-        INC a03
+        INC activeWebLengthArray,X
+        INC screenPtrYPos
         LDA #$03
         STA colorToDraw
         LDA #$1E
         STA charToDraw
         JSR s1884
-        LDA a03
+        LDA screenPtrYPos
         CMP #$13
         BEQ b1636
         RTS 
@@ -942,10 +992,10 @@ b1636   LDA #$03
         STA f1BDF,X
         RTS 
 
-s1641   LDA f1B7F,X
-        STA a02
-        LDA f1B9F,X
-        STA a03
+s1641   LDA activeSpiderArray,X
+        STA screenPtrXPos
+        LDA activeWebLengthArray,X
+        STA screenPtrYPos
         LDA f1BDF,X
         STA charToDraw
         INC f1BBF,X
@@ -961,14 +1011,14 @@ b1663   LDA #$00
         STA charToDraw
         JSR DrawCharacter
         LDA #$FF
-        STA f1B7F,X
+        STA activeSpiderArray,X
         RTS 
 
 s1670   CMP #$17
         BNE b16B2
         LDX #$16
-b1676   LDA f1B7F,X
-        CMP a02
+b1676   LDA activeSpiderArray,X
+        CMP screenPtrXPos
         BEQ b1683
 b167D   DEX 
         BNE b1676
@@ -985,7 +1035,7 @@ b1683   LDA f1BBF,X
         STA a24
         LDA #$10
         SEC 
-        SBC f1B9F,X
+        SBC activeWebLengthArray,X
         CLC 
         ROR 
         CLC 
@@ -1017,14 +1067,14 @@ b16BD   JSR s173C
         JSR DrawCharacter
         LDA #$00
         STA charToDraw
-        LDA f1B7F,X
-        STA a02
+        LDA activeSpiderArray,X
+        STA screenPtrXPos
         LDA #$00
-        STA a03
+        STA screenPtrYPos
 b16E1   JSR DrawCharacter
-        INC a03
-        LDA a03
-        CMP f1B9F,X
+        INC screenPtrYPos
+        LDA screenPtrYPos
+        CMP activeWebLengthArray,X
         BNE b16E1
         JSR s17AF
         LDA #$00
@@ -1066,22 +1116,27 @@ b171F   JSR s173C
         RTS 
 
 s173C   LDX #$16
-b173E   LDA f1B7F,X
-        CMP a02
+b173E   LDA activeSpiderArray,X
+        CMP screenPtrXPos
         BEQ b174D
 b1745   DEX 
         BNE b173E
+
         PLA 
         PLA 
         LDA #$00
         RTS 
 
-b174D   LDA f1B9F,X
-        CMP a03
+b174D   LDA activeWebLengthArray,X
+        CMP screenPtrYPos
         BNE b1745
         RTS 
 
-s1755   DEC a20
+;------------------------------------------------
+; PlayBackgroundMusic
+;------------------------------------------------
+PlayBackgroundMusic
+        DEC a20
         BEQ b175A
         RTS 
 
@@ -1123,6 +1178,9 @@ b1794   LDA VICCRD   ;$900D - frequency of sound osc.4 (noise)
         STA VICCRD   ;$900D - frequency of sound osc.4 (noise)
 b17AE   RTS 
 
+;------------------------------------------------
+; s17AF
+;------------------------------------------------
 s17AF   LDA #$F8
         STA VICCRA   ;$900A - frequency of sound osc.1 (bass)
         LDA #$04
@@ -1130,16 +1188,16 @@ s17AF   LDA #$F8
         RTS 
 
 s17B9   LDA #<p13
-        STA a03
+        STA screenPtrYPos
         LDA #>p13
         STA charToDraw
         LDA #$03
         STA colorToDraw
         LDA a1F
         BNE b1803
-        LDA f1B7F,X
-        STA a02
-        CMP a10
+        LDA activeSpiderArray,X
+        STA screenPtrXPos
+        CMP currentPlayerPositionCol
         BMI b17EA
         JSR s1884
         DEC f1BDF,X
@@ -1148,7 +1206,7 @@ s17B9   LDA #<p13
         BNE b1803
         LDA #$01
         STA f1BDF,X
-        DEC f1B7F,X
+        DEC activeSpiderArray,X
         JMP b1803
 
 b17EA   INC f1BDF,X
@@ -1160,9 +1218,9 @@ b17EA   INC f1BDF,X
         JSR DrawCharacter
         LDA #$00
         STA f1BDF,X
-        INC f1B7F,X
-b1803   LDA f1B7F,X
-        STA a02
+        INC activeSpiderArray,X
+b1803   LDA activeSpiderArray,X
+        STA screenPtrXPos
         LDA #$29
         SEC 
         SBC f1BDF,X
@@ -1229,7 +1287,7 @@ b1879   INC currentLevel
         JSR ZeroizeEntireScreen
         JMP StartNewLevel
 
-s1884   JSR s1048
+s1884   JSR GetCharacterAtCurrentPos
         BEQ b1898
         STA a09
         AND #$80
@@ -1283,20 +1341,20 @@ b18DE   JSR ZeroizeEntireScreen
 ;------------------------------------------------
 ZeroizeEntireScreen
         LDA #$00
-        STA a03
+        STA screenPtrYPos
 
 RowLoop LDA #$00
-        STA a02
+        STA screenPtrXPos
         STA charToDraw
 
 ColLoop JSR DrawCharacter
-        INC a02
-        LDA a02
+        INC screenPtrXPos
+        LDA screenPtrXPos
         CMP #$16
         BNE ColLoop
 
-        INC a03
-        LDA a03
+        INC screenPtrYPos
+        LDA screenPtrYPos
         CMP #$14
         BNE RowLoop
         RTS 
@@ -1348,9 +1406,9 @@ b1932   LDA #$00
 EnterTitleScreenLoopUntilGameStarts
         JSR ZeroizeEntireScreen
         LDA #>p0A00
-        STA a03
+        STA screenPtrYPos
         LDA #<p0A00
-        STA a02
+        STA screenPtrXPos
         TAX 
 b1959   LDA TextTitleLine2,X
         AND #$3F
@@ -1360,15 +1418,15 @@ b1959   LDA TextTitleLine2,X
         STA colorToDraw
         JSR DrawCharacter
         LDA #$06
-        STA a03
+        STA screenPtrYPos
         LDA CopyrightLine,X
         AND #$3F
         ORA #$80
         STA charToDraw
         JSR DrawCharacter
         LDA #$0A
-        STA a03
-        INC a02
+        STA screenPtrYPos
+        INC screenPtrXPos
         INX 
         CPX #$16
         BNE b1959
@@ -1467,9 +1525,9 @@ b1A40   DEX
 DrawLevelInterstitial
         JSR ZeroizeEntireScreen
         LDA #>p0A00
-        STA a03
+        STA screenPtrYPos
         LDA #<p0A00
-        STA a02
+        STA screenPtrXPos
         TAX 
         LDA #$07
         STA colorToDraw
@@ -1478,7 +1536,7 @@ b1A54   LDA LevelInterstitialText,X
         ORA #$80
         STA charToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INX 
         CPX #$16
         BNE b1A54
@@ -1518,9 +1576,9 @@ LoadGameOverScreen
         JSR s1B34
         JSR ZeroizeEntireScreen
         LDA #>p0A07
-        STA a03
+        STA screenPtrYPos
         LDA #<p0A07
-        STA a02
+        STA screenPtrXPos
         LDX #$00
 b1AC7   LDA GameOverText,X
         AND #$3F
@@ -1529,7 +1587,7 @@ b1AC7   LDA GameOverText,X
         LDA #$03
         STA colorToDraw
         JSR DrawCharacter
-        INC a02
+        INC screenPtrXPos
         INX 
         CPX #$09
         BNE b1AC7
@@ -1616,12 +1674,12 @@ ClearScreenandReturntoGameLoop
 
         .BYTE $8D,$04,$09,$A5,$07,$8D,$05,$09
         .BYTE $68
-f1B7F   .BYTE $8D,$33,$A3,$39,$E4,$13,$F5,$BB
+activeSpiderArray   .BYTE $8D,$33,$A3,$39,$E4,$13,$F5,$BB
         .BYTE $FB,$61,$E5,$5A,$87,$3B,$E9,$33
         .BYTE $C3,$8C,$E2,$C4,$CA,$CE,$CB,$9C
         .BYTE $CD,$C1,$4E,$DD,$C7,$8C
         .BYTE $60,$4D
-f1B9F   .BYTE $D6,$CC,$C8,$C8,$8C,$5F,$FD,$A8
+activeWebLengthArray   .BYTE $D6,$CC,$C8,$C8,$8C,$5F,$FD,$A8
         .BYTE $8F,$CD,$CD,$8F,$C6,$BC,$1C,$CC
         .BYTE $DC,$3D,$AB,$37,$9D,$1B,$CD,$32
         .BYTE $AA,$32,$57,$31,$0A,$2D,$1D,$7D
@@ -1634,5 +1692,6 @@ f1BDF   .BYTE $6D,$CC,$8A,$CC,$4E,$0C,$9C,$AC
         .BYTE $EA,$28,$69,$32,$DF,$38,$FB,$1B
         .BYTE $B2,$32,$FB,$22,$C1,$71,$0A,$35
         .BYTE $0E
+
 .include "charset.asm"
         .BYTE $00
