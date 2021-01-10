@@ -1,12 +1,13 @@
 ;
+
 ; **** ZP ABSOLUTE ADRESSES **** 
 ;
-a00 = $00
-a01 = $01
+zpLo = $00
+zpHi = $01
 a02 = $02
 a03 = $03
-a04 = $04
-a05 = $05
+charToDraw = $04
+colorToDraw = $05
 a07 = $07
 a09 = $09
 a0A = $0A
@@ -37,18 +38,15 @@ a24 = $24
 a25 = $25
 a26 = $26
 a27 = $27
-a28 = $28
-a29 = $29
-aC5 = $C5
-;
-; **** ZP POINTERS **** 
-;
-p00 = $00
+currentLevel = $28
+LivesLeft = $29
+LastKeyPressed = $C5
+
 ;
 ; **** FIELDS **** 
 ;
-f0340 = $0340
-f0360 = $0360
+SCREEN_PTR_LO = $0340
+SCREEN_PTR_HI = $0360
 f037F = $037F
 f0383 = $0383
 f0384 = $0384
@@ -56,9 +54,6 @@ f0387 = $0387
 f0388 = $0388
 f038B = $038B
 f038C = $038C
-f1F00 = $1F00
-f1FCD = $1FCD
-f1FDC = $1FDC
 fC000 = $C000
 fC001 = $C001
 fC042 = $C042
@@ -69,12 +64,7 @@ a0291 = $0291
 a0380 = $0380
 a0382 = $0382
 a0386 = $0386
-a1EE5 = $1EE5
-a1EE6 = $1EE6
-a1EF1 = $1EF1
-a1FD9 = $1FD9
-a1FEF = $1FEF
-a1FF0 = $1FF0
+SCREEN_RAM = $1E00
 a97D9 = $97D9
 a97DA = $97DA
 a97DB = $97DB
@@ -106,50 +96,71 @@ VIA2DDRB = $9122
 
         * = $1001
 
-        .BYTE $0D,$10,$0A,$00,$9E,$28,$34,$31
-        .BYTE $31,$31,$29,$00
+;------------------------------------------------
+; SYS 4111 (Launch)
+;------------------------------------------------
+        .BYTE $0D,$10,$0A,$00,$9E,$28,$34,$31,$31,$31,$29,$00
+Launch
         BRK #$00
-        JMP j1B55
+        JMP SetInterrupts
 
-s1012   LDA #$1E
-        STA a01
-        LDA #$00
-        STA a00
+;------------------------------------------------
+; We write to the screen by writing to address $1E00-$1FFF.
+; Use SCREEN_PTR_LO/SCREEN_PTR_HI as an array that contains
+; pointers to the addresses in screen memory.
+;------------------------------------------------
+InitScreenPtrArray
+        LDA #>SCREEN_RAM
+        STA zpHi
+        LDA #<SCREEN_RAM
+        STA zpLo
         LDX #$00
-b101C   LDA a00
-        STA f0340,X
-        LDA a01
-        STA f0360,X
-        LDA a00
+
+b101C   LDA zpLo
+        STA SCREEN_PTR_LO,X
+        LDA zpHi
+        STA SCREEN_PTR_HI,X
+        LDA zpLo
         CLC 
         ADC #$16
-        STA a00
-        LDA a01
+        STA zpLo
+        LDA zpHi
         ADC #$00
-        STA a01
+        STA zpHi
         INX 
         CPX #$1B
         BNE b101C
+
         RTS 
 
-s1039   LDX a03
+;------------------------------------------------
+; Screen_GetPtr
+;------------------------------------------------
+Screen_GetPtr
+        LDX a03
         LDY a02
-        LDA f0340,X
-        STA a00
-        LDA f0360,X
-        STA a01
+        LDA SCREEN_PTR_LO,X
+        STA zpLo
+        LDA SCREEN_PTR_HI,X
+        STA zpHi
         RTS 
 
+;------------------------------------------------
+;------------------------------------------------
 s1048   TXA 
         PHA 
         TYA 
         PHA 
-        JSR s1039
-        LDA (p00),Y
+        JSR Screen_GetPtr
+        LDA (zpLo),Y
         STA a07
 b1053   JMP j1079
 
-s1056   LDA a02
+;------------------------------------------------
+; DrawCharacter
+;------------------------------------------------
+DrawCharacter
+        LDA a02
         AND #$80
         BEQ b105D
         RTS 
@@ -161,15 +172,15 @@ b105D   TXA
         LDA a02
         CMP #$28
         BPL b1053
-        JSR s1039
-        LDA a04
-        STA (p00),Y
-        LDA a01
+        JSR Screen_GetPtr
+        LDA charToDraw
+        STA (zpLo),Y
+        LDA zpHi
         CLC 
         ADC #$78
-        STA a01
-        LDA a05
-        STA (p00),Y
+        STA zpHi
+        LDA colorToDraw
+        STA (zpLo),Y
 j1079   PLA 
         TAY 
         PLA 
@@ -177,15 +188,23 @@ j1079   PLA
         LDA a07
         RTS 
 
-s1080   LDX #$00
+;------------------------------------------------
+; ClearSreen
+;------------------------------------------------
+ClearSreen
+        LDX #$00
 b1082   LDA #$00
-        STA $1E00,X
-        STA f1F00,X
+        STA SCREEN_RAM,X
+        STA SCREEN_RAM + $0100,X
         DEX 
         BNE b1082
         RTS 
 
-j108E   JSR s1012
+;------------------------------------------------
+; InitializeAudioAndVideo
+;------------------------------------------------
+InitializeAudioAndVideo
+        JSR InitScreenPtrArray
         LDA #$0F
         STA VICCRE   ;$900E - sound volume
         LDA #$00
@@ -194,77 +213,106 @@ j108E   JSR s1012
         STA VICCRC   ;$900C - frequency of sound osc.3 (soprano)
         LDA #$08
         STA VICCRF   ;$900F - screen colors: background, border & inverse
-        LDA #$FF
+        LDA #$FF ; Character set at $1C00
         STA VICCR5   ;$9005 - screen map & character map address
-        JSR s10B1
-        JMP j111B
+        JSR DrawTitleScreen
+        JMP InitializeScoresAndEnterTitleLoop
 
-s10B1   JSR s1080
+;------------------------------------------------
+; DrawTitleScreen
+;------------------------------------------------
+DrawTitleScreen
+        JSR ClearSreen
+
         LDA #$01
-        STA a05
-        LDA #>p1400
+        STA colorToDraw
+
+        LDA #$14
         STA a03
-        LDA #<p1400
+
+        LDA #$00
         STA a02
-        LDA #$26
-        STA a04
-b10C4   JSR s1056
+
+        ; Draw the band across the top of the scores
+        LDA #$26 ; See $26 in charset.asm
+        STA charToDraw
+b10C4   JSR DrawCharacter
         INC a02
         LDA a02
         CMP #$16
         BNE b10C4
+
         INC a03
         LDA #$07
-        STA a05
+        STA colorToDraw
         LDX #$00
         STX a02
-b10D9   LDA f1105,X
-        STA a04
-        JSR s1056
+
+b10D9   LDA ScoreLineText,X
+        STA charToDraw
+        JSR DrawCharacter
         INC a02
         INX 
         CPX #$16
         BNE b10D9
+
         INC a03
         LDA #$08
         STA a02
         LDX #$00
-b10F0   LDA f1100,X
-        STA a04
-        JSR s1056
+b10F0   LDA QuotaText,X
+        STA charToDraw
+        JSR DrawCharacter
         INC a02
         INX 
         CPX #$05
         BNE b10F0
+
         RTS 
 
-f1100   .TEXT "<=>00"
-f1105   .TEXT "0000000", $00, "*+,000%0000000"
-j111B   LDA VICCR4   ;$9004 - raster beam location (bits 7-0)
+QuotaText     .TEXT "<=>00"
+ScoreLineText .TEXT "0000000", $00, "*+,000%0000000"
+;------------------------------------------------
+; InitializeScoresAndEnterTitleLoop
+;------------------------------------------------
+InitializeScoresAndEnterTitleLoop
+        LDA VICCR4   ;$9004 - raster beam location (bits 7-0)
         STA a1D
-j1120   LDA #$01
-        STA a28
-        JSR s194D
+
+EnterTitleLoop
+        LDA #$01
+        STA currentLevel
+        JSR EnterTitleScreenLoopUntilGameStarts
+
+        ; User has pressed F7 to start game
         LDA #$03
-        STA a29
+        STA LivesLeft
+
+        ; Initialize the score with zeros
         LDX #$07
         LDA #$30
-b112F   STA f1FCD,X
+b112F   STA SCREEN_RAM + $01CD,X
         DEX 
         BNE b112F
-j1135   LDA a28
+
+StartNewLevel
+        LDA currentLevel
         CLC 
         ADC #$10
         STA a25
-j113C   LDA #$0A
+RestartLevel
+        LDA #$0A
         STA a10
-        JSR s1A44
+        JSR DrawLevelInterstitial
         LDY #$20
-        LDX a28
+        LDX currentLevel
+
+        ; Wait a little
 b1147   DEY 
         BEQ b114D
         DEX 
         BNE b1147
+
 b114D   INY 
         TYA 
         STA a26
@@ -280,28 +328,37 @@ b114D   INY
         STA a18
         LDA #$07
         STA a24
+
         LDA #$30
-        STA a1FD9
+        STA SCREEN_RAM + $01D9
+
         LDA #$FF
         LDX #$04
 b1172   STA f037F,X
         DEX 
         BNE b1172
+
         LDX #$16
 b117A   STA f1B7F,X
         DEX 
         BNE b117A
-        JSR s1B0E
-        LDA a28
+
+        JSR ResetPlayerScore
+
+        LDA currentLevel
         ASL 
         STA a09
         LDA #$C0
         SEC 
         SBC a09
         STA a27
-        JMP j11CA
+        JMP MainGameLoop
 
-s1192   SEI 
+;------------------------------------------------
+; PlaySomeSounds
+;------------------------------------------------
+PlaySomeSounds
+        SEI 
         LDX #$7F
         STX VIA2DDRB ;$9122 - data direction register for port b
 b1198   LDY VIA2PB   ;$9120 - port b I/O register
@@ -331,12 +388,16 @@ b11BD   TAY
         STA a13
         RTS 
 
-j11CA   JSR s11DC
+;------------------------------------------------
+; MainGameLoop
+;------------------------------------------------
+MainGameLoop
+        JSR s11DC
         JSR s1325
         JSR s14E8
         JSR s1755
         JSR s1312
-        JMP j11CA
+        JMP MainGameLoop
 
 s11DC   DEC a14
         BEQ b11E1
@@ -351,7 +412,7 @@ b11EB   LDA a11
         BNE b1254
         LDA a10
         STA a15
-        JSR s1192
+        JSR PlaySomeSounds
         LDA a13
         AND #$04
         BEQ b120C
@@ -387,11 +448,11 @@ b1222   LDA #$12
         STA a02
         JSR s12A5
         LDA #$05
-        STA a04
+        STA charToDraw
         LDA a12
         BNE b1247
         LDA #$0F
-        STA a04
+        STA charToDraw
 b1247   LDA a10
         STA a02
         LDA a12
@@ -410,85 +471,85 @@ b1254   LDA #$12
         DEC a02
 b1266   JSR s127C
         LDA #$01
-        STA a04
+        STA charToDraw
         LDA a12
         BNE b1275
         LDA #$0B
-        STA a04
+        STA charToDraw
 b1275   LDA a10
         STA a02
         JMP j12F1
 
 s127C   LDA #$00
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         LDA a02
         PHA 
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         PLA 
         STA a02
         INC a03
-        JSR s1056
+        JSR DrawCharacter
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         DEC a03
         RTS 
 
 s12A5   LDA #$00
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         INC a03
-        JSR s1056
+        JSR DrawCharacter
         DEC a02
-        JSR s1056
+        JSR DrawCharacter
         DEC a03
         RTS 
 
 j12BE   LDA #$07
-        STA a05
-        JSR s1056
+        STA colorToDraw
+        JSR DrawCharacter
         LDA a02
         PHA 
-        INC a04
+        INC charToDraw
         INC a02
-        JSR s1056
-        INC a04
+        JSR DrawCharacter
+        INC charToDraw
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         PLA 
         STA a02
         INC a03
-        INC a04
-        JSR s1056
+        INC charToDraw
+        JSR DrawCharacter
         INC a02
-        INC a04
-        JSR s1056
+        INC charToDraw
+        JSR DrawCharacter
         INC a02
-        INC a04
-        JSR s1056
+        INC charToDraw
+        JSR DrawCharacter
         DEC a03
         RTS 
 
 j12F1   LDA #$07
-        STA a05
-        JSR s1056
-        INC a04
+        STA colorToDraw
+        JSR DrawCharacter
+        INC charToDraw
         INC a02
-        JSR s1056
+        JSR DrawCharacter
         DEC a02
         INC a03
-        INC a04
-        JSR s1056
+        INC charToDraw
+        JSR DrawCharacter
         INC a02
-        INC a04
-        JSR s1056
+        INC charToDraw
+        JSR DrawCharacter
         DEC a03
         RTS 
 
@@ -513,16 +574,16 @@ b132A   LDA #$10
         BNE b1329
         LDA #$02
         STA a16
-        JSR s1192
+        JSR PlaySomeSounds
         LDA a17
         STA a03
         LDA #$00
         STA a02
-        STA a04
+        STA charToDraw
 b1346   JSR s1048
         CMP #$1B
         BNE b1350
-        JSR s1056
+        JSR DrawCharacter
 b1350   INC a02
         LDA a02
         CMP #$16
@@ -546,15 +607,15 @@ b1368   LDA a13
 b1378   LDA #$00
         STA a02
         LDA #$1B
-        STA a04
+        STA charToDraw
         LDX a18
         LDA f131E,X
-        STA a05
+        STA colorToDraw
         LDA a17
         STA a03
 b138B   JSR s1048
         BNE b1393
-        JSR s1056
+        JSR DrawCharacter
 b1393   INC a02
         LDA a02
         CMP #$16
@@ -613,8 +674,8 @@ p1400   =*+$02
         LDA a0386
         STA a03
         LDA #$00
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         LDX #$02
 b140C   LDA f037F,X
         STA a0380,X
@@ -662,8 +723,8 @@ b1472   LDA f037F,X
         LDA f0383,X
         STA a03
         LDA #$00
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         LDA #$FF
         STA f037F,X
         DEX 
@@ -682,7 +743,7 @@ b148C   LDA a17
         STA a18
 j14A3   LDX #$03
 b14A5   LDA f13AA,X
-        STA a05
+        STA colorToDraw
         LDA f037F,X
         STA a02
         LDA f0383,X
@@ -699,13 +760,13 @@ b14BC   LDA f038B,X
         JMP b14CA
 
 b14C9   INY 
-b14CA   STY a04
+b14CA   STY charToDraw
         JSR s1048
         JSR s1670
         BNE b14D7
         JMP j1470
 
-b14D7   JSR s1056
+b14D7   JSR DrawCharacter
         DEX 
         BNE b14A5
         LDA f0384
@@ -795,10 +856,10 @@ s157F   LDA #$00
         LDA f1B7F,X
         STA a02
         LDA #>p0417
-        STA a05
+        STA colorToDraw
         LDA #<p0417
-        STA a04
-b1590   JSR s1056
+        STA charToDraw
+b1590   JSR DrawCharacter
         INC a03
         LDA a03
         CMP f1B9F,X
@@ -806,8 +867,8 @@ b1590   JSR s1056
         LDA #$1C
         CLC 
         ADC f1BDF,X
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         INC f1BDF,X
         LDA f1BDF,X
         AND #$01
@@ -837,20 +898,20 @@ s15D2   LDA #$00
         BEQ b1608
         TAY 
         LDA f15CC,Y
-        STA a04
+        STA charToDraw
         LDA a1E
         AND #$07
-        STA a05
-b15F1   JSR s1056
+        STA colorToDraw
+b15F1   JSR DrawCharacter
         INC a03
         LDA a03
         CMP f1B9F,X
         BNE b15F1
         LDA #$1C
-        STA a04
+        STA charToDraw
         LDA #$03
-        STA a05
-        JMP s1056
+        STA colorToDraw
+        JMP DrawCharacter
 
 b1608   LDA #$02
         STA f1BBF,X
@@ -861,14 +922,14 @@ s160E   LDA f1B7F,X
         LDA f1B9F,X
         STA a03
         LDA #$00
-        STA a04
+        STA charToDraw
         JSR s1884
         INC f1B9F,X
         INC a03
         LDA #$03
-        STA a05
+        STA colorToDraw
         LDA #$1E
-        STA a04
+        STA charToDraw
         JSR s1884
         LDA a03
         CMP #$13
@@ -886,19 +947,19 @@ s1641   LDA f1B7F,X
         LDA f1B9F,X
         STA a03
         LDA f1BDF,X
-        STA a04
+        STA charToDraw
         INC f1BBF,X
         LDA f1BBF,X
         AND #$07
-        STA a05
-        JSR s1056
+        STA colorToDraw
+        JSR DrawCharacter
         LDA f1BBF,X
         BEQ b1663
         RTS 
 
 b1663   LDA #$00
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         LDA #$FF
         STA f1B7F,X
         RTS 
@@ -935,7 +996,7 @@ b1683   LDA f1BBF,X
         JSR s1829
         PLA 
         ADC #$30
-        STA a1FD9
+        STA SCREEN_RAM + $01D9
         LDA #$00
         RTS 
 
@@ -950,17 +1011,17 @@ b16BD   JSR s173C
         STA f1BBF,X
         LDA #$1F
         STA f1BDF,X
-        STA a04
+        STA charToDraw
         LDA #$01
         JSR s1846
-        JSR s1056
+        JSR DrawCharacter
         LDA #$00
-        STA a04
+        STA charToDraw
         LDA f1B7F,X
         STA a02
         LDA #$00
         STA a03
-b16E1   JSR s1056
+b16E1   JSR DrawCharacter
         INC a03
         LDA a03
         CMP f1B9F,X
@@ -976,10 +1037,10 @@ j16F3   CMP #$1E
         STA f1BBF,X
         LDA #$20
         STA f1BDF,X
-        STA a04
+        STA charToDraw
         LDA #$04
         JSR s1846
-        JSR s1056
+        JSR DrawCharacter
         JSR s17AF
         LDA #$00
         RTS 
@@ -996,10 +1057,10 @@ b171F   JSR s173C
         STA f1BBF,X
         LDA #$21
         STA f1BDF,X
-        STA a04
+        STA charToDraw
         LDA #$06
         JSR s1846
-        JSR s1056
+        JSR DrawCharacter
         JSR s17AF
         LDA #$00
         RTS 
@@ -1071,9 +1132,9 @@ s17AF   LDA #$F8
 s17B9   LDA #<p13
         STA a03
         LDA #>p13
-        STA a04
+        STA charToDraw
         LDA #$03
-        STA a05
+        STA colorToDraw
         LDA a1F
         BNE b1803
         LDA f1B7F,X
@@ -1095,8 +1156,8 @@ b17EA   INC f1BDF,X
         CMP #$02
         BNE b1803
         LDA #$00
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         LDA #$00
         STA f1BDF,X
         INC f1B7F,X
@@ -1105,7 +1166,7 @@ b1803   LDA f1B7F,X
         LDA #$29
         SEC 
         SBC f1BDF,X
-        STA a04
+        STA charToDraw
         JMP s1884
 
 s1813   LDA a24
@@ -1123,12 +1184,12 @@ b1818   DEC a24
 s1829   TXA 
         PHA 
 b182B   LDX a09
-b182D   INC f1FCD,X
-        LDA f1FCD,X
+b182D   INC SCREEN_RAM + $01CD,X
+        LDA SCREEN_RAM + $01CD,X
         CMP #$3A
         BNE b183F
         LDA #$30
-        STA f1FCD,X
+        STA SCREEN_RAM + $01CD,X
         DEX 
         BNE b182D
 b183F   DEC a0A
@@ -1142,7 +1203,7 @@ s1846   STA a0A
         STA a09
         JSR s1829
         DEC a25
-        JSR s1B0E
+        JSR ResetPlayerScore
         LDA a25
         BEQ b1879
         LDA a25
@@ -1163,10 +1224,10 @@ b1874   DEC a09
         BNE b186A
         RTS 
 
-b1879   INC a28
-        JSR s1902
-        JSR s18E4
-        JMP j1135
+b1879   INC currentLevel
+        JSR PlayLevelCompleteMusic
+        JSR ZeroizeEntireScreen
+        JMP StartNewLevel
 
 s1884   JSR s1048
         BEQ b1898
@@ -1176,11 +1237,15 @@ s1884   JSR s1048
         LDA #$14
         CMP a09
         BMI b1898
-        JMP j189B
+        JMP PlayerKilled
 
-b1898   JMP s1056
+b1898   JMP DrawCharacter
 
-j189B   LDA #$00
+;------------------------------------------------
+; PlayerKilled
+;------------------------------------------------
+PlayerKilled
+        LDA #$00
         STA VICCRA   ;$900A - frequency of sound osc.1 (bass)
         STA VICCRB   ;$900B - frequency of sound osc.2 (alto)
         STA VICCRC   ;$900C - frequency of sound osc.3 (soprano)
@@ -1205,30 +1270,42 @@ b18C1   STX VICCRF   ;$900F - screen colors: background, border & inverse
         STA VICCRD   ;$900D - frequency of sound osc.4 (noise)
         LDA #$0F
         STA VICCRE   ;$900E - sound volume
-        DEC a29
+
+        DEC LivesLeft
         BNE b18DE
-        JMP j1AB4
+        JMP LoadGameOverScreen
 
-b18DE   JSR s18E4
-        JMP j113C
+b18DE   JSR ZeroizeEntireScreen
+        JMP RestartLevel
 
-s18E4   LDA #>p00
+;------------------------------------------------
+; ZeroizeEntireScreen
+;------------------------------------------------
+ZeroizeEntireScreen
+        LDA #$00
         STA a03
-b18E8   LDA #<p00
+
+RowLoop LDA #$00
         STA a02
-        STA a04
-b18EE   JSR s1056
+        STA charToDraw
+
+ColLoop JSR DrawCharacter
         INC a02
         LDA a02
         CMP #$16
-        BNE b18EE
+        BNE ColLoop
+
         INC a03
         LDA a03
         CMP #$14
-        BNE b18E8
+        BNE RowLoop
         RTS 
 
-s1902   LDA #$00
+;------------------------------------------------
+; PlayLevelCompleteMusic
+;------------------------------------------------
+PlayLevelCompleteMusic
+        LDA #$00
         STA VICCR4   ;$9004 - raster beam location (bits 7-0)
         STA a0A
         STA a0B
@@ -1265,78 +1342,92 @@ b1932   LDA #$00
         STA VICCRC   ;$900C - frequency of sound osc.3 (soprano)
         RTS 
 
-s194D   JSR s18E4
+;------------------------------------------------
+; EnterTitleScreenLoopUntilGameStarts
+;------------------------------------------------
+EnterTitleScreenLoopUntilGameStarts
+        JSR ZeroizeEntireScreen
         LDA #>p0A00
         STA a03
         LDA #<p0A00
         STA a02
         TAX 
-b1959   LDA f19C0,X
+b1959   LDA TextTitleLine2,X
         AND #$3F
         ORA #$80
-        STA a04
+        STA charToDraw
         LDA #$01
-        STA a05
-        JSR s1056
+        STA colorToDraw
+        JSR DrawCharacter
         LDA #$06
         STA a03
-        LDA f19E3,X
+        LDA CopyrightLine,X
         AND #$3F
         ORA #$80
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         LDA #$0A
         STA a03
         INC a02
         INX 
         CPX #$16
         BNE b1959
-        JSR s1A24
+        JSR DrawCurrentLevelOnScreen
         LDA #$00
         STA a0A
         STA a0C
-b198D   LDA a0C
+
+OuterTitleLoop
+        LDA a0C
         STA a0B
-j1991   INC a0B
+
+        ; Title screen loop, wait for the player to press something.
+TitleWaitForInput
+        INC a0B
         LDA a0B
         AND #$07
         TAX 
+        ; Flash the screen borders
         LDA f131D,X
         ORA #$08
         STA VICCRF   ;$900F - screen colors: background, border & inverse
         LDY a0B
 b19A2   LDA VICCR4   ;$9004 - raster beam location (bits 7-0)
-        BEQ b19B3
-        LDA aC5
+        BEQ CycleColors ; Cycle around the colors
+
+        LDA LastKeyPressed
         CMP #$40
         BNE b19D6
+
 b19AD   DEY 
         BNE b19A2
-        JMP j1991
+        JMP TitleWaitForInput
 
-b19B3   DEC a0A
-        BNE b198D
+CycleColors
+        DEC a0A
+        BNE OuterTitleLoop
         LDA #$05
         STA a0A
         INC a0C
-        JMP b198D
+        JMP OuterTitleLoop
 
-f19C0   .TEXT "F1:LEVEL 00   F7:BEGIN"
-b19D6   CMP #$27
-        BEQ b19F9
+TextTitleLine2   .TEXT "F1:LEVEL 00   F7:BEGIN"
+b19D6   CMP #$27 ; F1 Pressed
+        BEQ IncrementSelectedLevel
         CMP #$3F
         BNE b19AD
-        LDA #$08
-        JMP j1B70
+        LDA #$08 ; F8 Pressed
+        JMP ClearScreenandReturntoGameLoop
 
-f19E3   .TEXT "(C)  1983    LLAMASOFT"
-b19F9   INC a28
-        LDA a28
+CopyrightLine   .TEXT "(C)  1983    LLAMASOFT"
+IncrementSelectedLevel
+        INC currentLevel
+        LDA currentLevel
         CMP #$21
         BNE b1A05
         LDA #$01
-        STA a28
-b1A05   JSR s1A24
+        STA currentLevel
+b1A05   JSR DrawCurrentLevelOnScreen
         LDA #$30
         STA a0E
 b1A0C   LDX #$00
@@ -1351,43 +1442,51 @@ b1A0E   LDA a0E
         STA VICCRC   ;$900C - frequency of sound osc.3 (soprano)
         JMP b19AD
 
-s1A24   LDA #$30
-        STA a1EE5
-        STA a1EE6
-        LDX a28
-b1A2E   INC a1EE6
-        LDA a1EE6
+;------------------------------------------------
+; DrawCurrentLevelOnScreen
+;------------------------------------------------
+DrawCurrentLevelOnScreen
+        LDA #$30
+        STA SCREEN_RAM + $00E5
+        STA SCREEN_RAM + $00E6
+        LDX currentLevel
+b1A2E   INC SCREEN_RAM + $00E6
+        LDA SCREEN_RAM + $00E6
         CMP #$3A
         BNE b1A40
         LDA #$30
-        STA a1EE6
-        INC a1EE5
+        STA SCREEN_RAM + $00E6
+        INC SCREEN_RAM + $00E5
 b1A40   DEX 
         BNE b1A2E
         RTS 
 
-s1A44   JSR s18E4
+;------------------------------------------------
+; DrawLevelInterstitial
+;------------------------------------------------
+DrawLevelInterstitial
+        JSR ZeroizeEntireScreen
         LDA #>p0A00
         STA a03
         LDA #<p0A00
         STA a02
         TAX 
         LDA #$07
-        STA a05
-b1A54   LDA f1A9E,X
+        STA colorToDraw
+b1A54   LDA LevelInterstitialText,X
         AND #$3F
         ORA #$80
-        STA a04
-        JSR s1056
+        STA charToDraw
+        JSR DrawCharacter
         INC a02
         INX 
         CPX #$16
         BNE b1A54
-        JSR s1A24
+        JSR DrawCurrentLevelOnScreen
         LDA #$30
         CLC 
-        ADC a29
-        STA a1EF1
+        ADC LivesLeft
+        STA SCREEN_RAM + $00F1
 b1A72   LDX #$30
 b1A74   LDA fC000,X
         ORA #$80
@@ -1407,25 +1506,29 @@ b1A82   DEY
         STA VICCRB   ;$900B - frequency of sound osc.2 (alto)
         LDA #$0F
         STA VICCRE   ;$900E - sound volume
-        JMP s18E4
+        JMP ZeroizeEntireScreen
 
-f1A9E   .TEXT "AT LEVEL 00   LLAMAS:0"
-j1AB4   LDX #$F8
+LevelInterstitialText   .TEXT "AT LEVEL 00   LLAMAS:0"
+;------------------------------------------------
+; LoadGameOverScreen
+;------------------------------------------------
+LoadGameOverScreen
+        LDX #$F8
         TXS 
         JSR s1B34
-        JSR s18E4
+        JSR ZeroizeEntireScreen
         LDA #>p0A07
         STA a03
         LDA #<p0A07
         STA a02
         LDX #$00
-b1AC7   LDA f1B05,X
+b1AC7   LDA GameOverText,X
         AND #$3F
         ORA #$80
-        STA a04
+        STA charToDraw
         LDA #$03
-        STA a05
-        JSR s1056
+        STA colorToDraw
+        JSR DrawCharacter
         INC a02
         INX 
         CPX #$09
@@ -1445,32 +1548,36 @@ b1AE9   DEY
         BNE b1ADE
         LDA #$0F
         STA VICCRE   ;$900E - sound volume
-        JSR s18E4
-        JMP j1120
+        JSR ZeroizeEntireScreen
+        JMP EnterTitleLoop
 
-f1B05   .TEXT "GAME OVER"
-s1B0E   LDA #$30
-        STA a1FEF
-        STA a1FF0
+GameOverText   .TEXT "GAME OVER"
+;------------------------------------------------
+; ResetPlayerScore
+;------------------------------------------------
+ResetPlayerScore
+        LDA #$30
+        STA SCREEN_RAM + $01EF
+        STA SCREEN_RAM + $01F0
         LDA a25
         STA a0E
         BNE b1B1D
         RTS 
 
-b1B1D   INC a1FF0
-        LDA a1FF0
+b1B1D   INC SCREEN_RAM + $01F0
+        LDA SCREEN_RAM + $01F0
         CMP #$3A
         BNE b1B2F
         LDA #$30
-        STA a1FF0
-        INC a1FEF
+        STA SCREEN_RAM + $01F0
+        INC SCREEN_RAM + $01EF
 b1B2F   DEC a0E
         BNE b1B1D
         RTS 
 
 s1B34   LDX #$01
-b1B36   LDA f1FCD,X
-        CMP f1FDC,X
+b1B36   LDA SCREEN_RAM + $01CD,X
+        CMP SCREEN_RAM + $01DC,X
         BMI b1B48
         BEQ b1B43
         JMP j1B49
@@ -1481,26 +1588,51 @@ b1B43   INX
 b1B48   RTS 
 
 j1B49   LDX #$07
-b1B4B   LDA f1FCD,X
-        STA f1FDC,X
+b1B4B   LDA SCREEN_RAM + $01CD,X
+        STA SCREEN_RAM + $01DC,X
         DEX 
         BNE b1B4B
         RTS 
 
-j1B55   LDA #$C2
+;------------------------------------------------
+; SetInterrupts
+;------------------------------------------------
+SetInterrupts
+        LDA #$C2
         STA RAM_CINV
         LDA #$80
         STA a0291
         LDA #$02
         STA VIA1IER  ;$911E - interrupt enable register (IER)
-        JMP j108E
+        JMP InitializeAudioAndVideo
 
         RTS 
 
         .BYTE $48,$98,$48,$8D,$02,$09,$8A,$8D
-j1B70   STA VICCRF   ;$900F - screen colors: background, border & inverse
-        JMP s18E4
 
-        .BYTE $8D,$04
+ClearScreenandReturntoGameLoop
+        STA VICCRF   ;$900F - screen colors: background, border & inverse
+        JMP ZeroizeEntireScreen ; Ends with an RTS so returns
+
+        .BYTE $8D,$04,$09,$A5,$07,$8D,$05,$09
+        .BYTE $68
+f1B7F   .BYTE $8D,$33,$A3,$39,$E4,$13,$F5,$BB
+        .BYTE $FB,$61,$E5,$5A,$87,$3B,$E9,$33
+        .BYTE $C3,$8C,$E2,$C4,$CA,$CE,$CB,$9C
+        .BYTE $CD,$C1,$4E,$DD,$C7,$8C
+        .BYTE $60,$4D
+f1B9F   .BYTE $D6,$CC,$C8,$C8,$8C,$5F,$FD,$A8
+        .BYTE $8F,$CD,$CD,$8F,$C6,$BC,$1C,$CC
+        .BYTE $DC,$3D,$AB,$37,$9D,$1B,$CD,$32
+        .BYTE $AA,$32,$57,$31,$0A,$2D,$1D,$7D
+f1BBF   .BYTE $D8,$1D,$2B,$3B,$93,$3B,$47,$B3
+        .BYTE $18,$39,$9F,$A2,$AE,$33,$92,$16
+        .BYTE $DA,$EC,$D8,$C8,$CC,$CD,$C6,$C7
+        .BYTE $CD,$4C,$CB,$8C,$CD,$4C,$CB,$CC
+f1BDF   .BYTE $6D,$CC,$8A,$CC,$4E,$0C,$9C,$AC
+        .BYTE $25,$48,$BF,$CC,$CC,$DE,$CC,$D8
+        .BYTE $EA,$28,$69,$32,$DF,$38,$FB,$1B
+        .BYTE $B2,$32,$FB,$22,$C1,$71,$0A,$35
+        .BYTE $0E
 .include "charset.asm"
         .BYTE $00
