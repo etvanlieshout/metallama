@@ -5,7 +5,7 @@ This is the disassembled and [commented source code] for the 1984 Commodore Vic 
 
 This fork modifies the original game to use the Commodore VIC-20 keyboard, rather than a joystick. The new controls are `wasd` for joystick directions and `F1` for fire.
 
-The modified version is intended to be run on a VIC-20, I have not tested it on any emulators. There are two addition files in src: `wasd-f1_metallama.asm` is the modified code, `original_src` is the original disassembled src from mwenge. To build the modified version, copy or rename `wasd-f1_metallama.asm` to `metallama.asm` and run make.
+The modified version is intended to be run on a VIC-20, I have not tested it on any emulators. There are two addition files in src: `wasd-f1_metallama.asm` is the modified code, `original_src` is the original disassembled src from mwenge plus some additional commenting and labelling. To build the modified version, copy or rename `wasd-f1_metallama.asm` to `metallama.asm` and run make.
 
 A version of the game you can [play in your browser can be found here]. (Use the arrow keys and `ctrl` to manipulate the display, or use a gamepad if you have one plugged in. See the manual below for more.)
 
